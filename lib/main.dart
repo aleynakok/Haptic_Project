@@ -5,6 +5,8 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'ai_service.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:http/http.dart' as http;
 
 void main() => runApp(const MyApp());
 
@@ -23,8 +25,8 @@ class MyApp extends StatelessWidget {
   }
 }
 
-const Color kCyan   = Color(0xFF00FBFF);
-const Color kBlue   = Color(0xFF007BFF);
+const Color kCyan = Color(0xFF00FBFF);
+const Color kBlue = Color(0xFF007BFF);
 const Color kDeepBg = Color(0xFF010409);
 
 class GradientText extends StatelessWidget {
@@ -64,8 +66,10 @@ class WelcomePage extends StatelessWidget {
                   "HAPTIC\nPROJECT",
                   gradient: const LinearGradient(colors: [Colors.white, kCyan]),
                   style: GoogleFonts.orbitron(
-                    fontSize: 42, fontWeight: FontWeight.w900,
-                    height: 1.3, letterSpacing: 12,
+                    fontSize: 42,
+                    fontWeight: FontWeight.w900,
+                    height: 1.3,
+                    letterSpacing: 12,
                   ),
                 ),
                 const SizedBox(height: 30),
@@ -80,10 +84,11 @@ class WelcomePage extends StatelessWidget {
                 ),
                 const SizedBox(height: 120),
                 _neonButton(context,
-                  text: "BOOT SYSTEM",
-                  onTap: () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => const HapticControlPage())),
-                ),
+                    text: "BOOT SYSTEM",
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const HapticControlPage()))),
               ],
             ),
           ),
@@ -100,34 +105,94 @@ class HapticControlPage extends StatefulWidget {
 }
 
 class _HapticControlPageState extends State<HapticControlPage> {
-  BluetoothDevice?         targetDevice;
+  BluetoothDevice? targetDevice;
   BluetoothCharacteristic? targetCharacteristic;
-  bool   isConnected     = false;
-  bool   isScanning      = false;
+  bool isConnected = false;
+  bool isScanning = false;
   String predictedFabric = "";
-  bool   isLoading       = false;
+  bool isLoading = false;
+  bool isMuted = false; // Mute durumu için değişken
 
   StreamSubscription? _scanSub;
   StreamSubscription? _isScanSub;
+  late StreamSubscription _intentDataStreamSubscription;
 
   final TextEditingController _urlController = TextEditingController();
   final AIService _aiService = AIService();
 
   final String serviceUuid = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-  final String charUuid    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+  final String charUuid = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
   final Map<String, String> fabricCommands = {
-    "ipek": "1",  "silk": "1",
-    "pamuk": "2", "cotton": "2",
-    "denim": "3", "kot": "3",
-    "yün": "4",   "wool": "4",
-    "keten": "5", "sentetik": "6",
+    "ipek": "1",
+    "silk": "1",
+    "pamuk": "2",
+    "cotton": "2",
+    "denim": "3",
+    "kot": "3",
+    "yün": "4",
+    "wool": "4",
+    "keten": "5",
+    "sentetik": "6",
   };
+
+  @override
+  void initState() {
+    super.initState();
+    _initSharingListener();
+  }
+
+  void _initSharingListener() {
+    _intentDataStreamSubscription =
+        ReceiveSharingIntent.instance.getMediaStream().listen((value) {
+          if (value.isNotEmpty) {
+            _handleIncomingText(value.first.path);
+          }
+        }, onError: (err) {
+          debugPrint("Gelen paylaşım hatası: $err");
+        });
+
+    ReceiveSharingIntent.instance.getInitialMedia().then((value) {
+      if (value.isNotEmpty) {
+        _handleIncomingText(value.first.path);
+      }
+    });
+  }
+
+  Future<void> _handleIncomingText(String rawText) async {
+    setState(() {
+      _urlController.text = "Link Hazırlanıyor...";
+      isLoading = true;
+    });
+    String finalLink = await FabricDetectionHelper.resolveLink(rawText);
+    setState(() {
+      _urlController.text = finalLink;
+    });
+    _analyze();
+  }
+
+  // Mute/Unmute fonksiyonu
+  void _toggleMute(bool value) async {
+    if (!isConnected || targetCharacteristic == null) {
+      _showSnackBar("PLEASE CONNECT DEVICE FIRST");
+      return;
+    }
+    setState(() => isMuted = value);
+    String cmd = isMuted ? "0" : "u";
+    try {
+      await targetCharacteristic!.write(cmd.codeUnits);
+      _showSnackBar(isMuted ? "SYSTEM MUTED (0)" : "SYSTEM ACTIVE (U)",
+          isError: false);
+    } catch (e) {
+      _showSnackBar("MUTE COMMAND FAILED");
+    }
+  }
 
   @override
   void dispose() {
     _scanSub?.cancel();
     _isScanSub?.cancel();
+    _intentDataStreamSubscription.cancel();
     _urlController.dispose();
     super.dispose();
   }
@@ -145,31 +210,27 @@ class _HapticControlPageState extends State<HapticControlPage> {
 
   void startScanAndConnect() async {
     if (isScanning) return;
-
     await _scanSub?.cancel();
     await _isScanSub?.cancel();
-    _scanSub   = null;
-    _isScanSub = null;
-
-    setState(() { isScanning = true; });
-
+    setState(() {
+      isScanning = true;
+    });
     await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
-
     _scanSub = FlutterBluePlus.scanResults.listen((results) async {
       for (final r in results) {
         final name = r.device.platformName.isNotEmpty
             ? r.device.platformName
             : r.advertisementData.advName;
-
         if (name == "Haptic_Fabric_ESP32") {
           await FlutterBluePlus.stopScan();
-          if (mounted) setState(() { targetDevice = r.device; });
+          if (mounted) setState(() {
+            targetDevice = r.device;
+          });
           await connectToDevice(r.device);
           break;
         }
       }
     });
-
     _isScanSub = FlutterBluePlus.isScanning.listen((scanning) {
       if (!scanning && mounted && !isConnected) {
         setState(() => isScanning = false);
@@ -180,9 +241,7 @@ class _HapticControlPageState extends State<HapticControlPage> {
   Future<void> connectToDevice(BluetoothDevice device) async {
     try {
       await device.connect();
-
       final services = await device.discoverServices();
-
       for (final service in services) {
         if (service.uuid.toString().toLowerCase() == serviceUuid) {
           for (final char in service.characteristics) {
@@ -191,7 +250,7 @@ class _HapticControlPageState extends State<HapticControlPage> {
                 setState(() {
                   targetCharacteristic = char;
                   isConnected = true;
-                  isScanning  = false;
+                  isScanning = false;
                 });
               }
               _showSnackBar("SYSTEM SYNCHRONIZED", isError: false);
@@ -201,8 +260,9 @@ class _HapticControlPageState extends State<HapticControlPage> {
         }
       }
     } catch (e) {
-      debugPrint("Connection Error: $e");
-      if (mounted) setState(() { isScanning = false; });
+      if (mounted) setState(() {
+        isScanning = false;
+      });
       _showSnackBar("CONNECTION FAILED");
     }
   }
@@ -210,26 +270,43 @@ class _HapticControlPageState extends State<HapticControlPage> {
   void sendCommand(String label, String cmd) async {
     if (targetCharacteristic != null) {
       await targetCharacteristic!.write(cmd.codeUnits);
-      setState(() { predictedFabric = label; });
+      setState(() {
+        predictedFabric = label;
+      });
     }
   }
 
   void _analyze() async {
-    if (_urlController.text.trim().isEmpty) return;
-    setState(() { isLoading = true; predictedFabric = ""; });
-
+    String input = _urlController.text.trim();
+    if (input.isEmpty) return;
+    setState(() {
+      isLoading = true;
+      predictedFabric = "";
+    });
     try {
-      final result     = await _aiService.predictFabric(_urlController.text.trim());
+      String resolvedUrl = await FabricDetectionHelper.resolveLink(input);
+      if (resolvedUrl != input) {
+        setState(() => _urlController.text = resolvedUrl);
+      }
+      final result = await _aiService.predictFabric(resolvedUrl);
       final normalized = result.toLowerCase().trim();
-      final cmd        = fabricCommands[normalized] ?? "1";
-
+      final cmd = fabricCommands[normalized] ?? "1";
       if (mounted) setState(() => isLoading = false);
 
       if (isConnected) {
-        sendCommand(normalized, cmd);
+        if (isMuted) {
+          // Mute açıksa haptic komut gönderme, sadece sonucu göster
+          if (mounted) setState(() => predictedFabric = normalized);
+          _showSnackBar("MUTED: ${normalized.toUpperCase()} DETECTED",
+              isError: false);
+        } else {
+          sendCommand(normalized, cmd);
+          _showSnackBar("ANALYSIS COMPLETE: ${normalized.toUpperCase()}",
+              isError: false);
+        }
       } else {
         if (mounted) setState(() => predictedFabric = normalized);
-        _showSnackBar("PLEASE CONNECT DEVICE");
+        _showSnackBar("PLEASE CONNECT DEVICE TO SYNC TEXTURE");
       }
     } catch (e) {
       if (mounted) setState(() => isLoading = false);
@@ -241,7 +318,8 @@ class _HapticControlPageState extends State<HapticControlPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg,
-          style: GoogleFonts.orbitron(fontSize: 12, fontWeight: FontWeight.bold)),
+          style:
+          GoogleFonts.orbitron(fontSize: 12, fontWeight: FontWeight.bold)),
       backgroundColor: isError ? Colors.redAccent : kCyan.withValues(alpha: 0.8),
     ));
   }
@@ -262,11 +340,12 @@ class _HapticControlPageState extends State<HapticControlPage> {
                   "SYSTEM STATUS  •  ${isConnected ? "ONLINE" : "OFFLINE"}",
                   style: GoogleFonts.orbitron(
                     color: isConnected ? kCyan : Colors.white24,
-                    letterSpacing: 4, fontSize: 13, fontWeight: FontWeight.w900,
+                    letterSpacing: 4,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 40),
-
                 _glassBox(
                   padding: 20,
                   child: Row(
@@ -281,79 +360,116 @@ class _HapticControlPageState extends State<HapticControlPage> {
                               isConnected ? "LINK READY" : "HARDWARE LINK",
                               style: GoogleFonts.orbitron(
                                   fontWeight: FontWeight.w900,
-                                  fontSize: 16, letterSpacing: 1.5),
+                                  fontSize: 16,
+                                  letterSpacing: 1.5),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               isConnected
                                   ? "ESP32 SYNCHRONIZED"
-                                  : (isScanning ? "SCANNING..." : "TAP TO INITIALIZE SCAN"),
+                                  : (isScanning
+                                  ? "SCANNING..."
+                                  : "TAP TO INITIALIZE SCAN"),
                               style: GoogleFonts.rajdhani(
-                                  color: Colors.white54, fontSize: 11,
-                                  fontWeight: FontWeight.bold, letterSpacing: 1.5),
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.5),
                             ),
                           ],
                         ),
                       ),
                       if (isScanning)
                         const SizedBox(
-                          width: 28, height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: kCyan),
-                        )
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: kCyan))
                       else
                         IconButton(
                           onPressed: isConnected ? null : requestPermissions,
                           icon: Icon(
-                            isConnected
-                                ? Icons.bluetooth_connected
-                                : Icons.bluetooth_searching,
-                            color: isConnected ? kCyan : Colors.white54,
-                            size: 32,
-                          ),
+                              isConnected
+                                  ? Icons.bluetooth_connected
+                                  : Icons.bluetooth_searching,
+                              color: isConnected ? kCyan : Colors.white54,
+                              size: 32),
                         ),
                     ],
                   ),
                 ),
-
+                const SizedBox(height: 20),
+                // MUTE/UNMUTE SWITCH ALANI
+                _glassBox(
+                  padding: 12,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            isMuted
+                                ? Icons.volume_off_rounded
+                                : Icons.volume_up_rounded,
+                            color: isMuted ? Colors.redAccent : kCyan,
+                          ),
+                          const SizedBox(width: 15),
+                          Text(
+                            isMuted ? "SYSTEM MUTED" : "SYSTEM ACTIVE",
+                            style: GoogleFonts.orbitron(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color:
+                                isMuted ? Colors.redAccent : Colors.white),
+                          ),
+                        ],
+                      ),
+                      Switch(
+                        value: isMuted,
+                        onChanged: _toggleMute,
+                        activeColor: Colors.redAccent,
+                        inactiveThumbColor: kCyan,
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 50),
-
                 _glassBox(
                   padding: 5,
                   child: TextField(
                     controller: _urlController,
                     style: GoogleFonts.rajdhani(
-                      fontSize: 18, fontWeight: FontWeight.w800,
-                      color: Colors.white, letterSpacing: 2.0,
-                    ),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: 2.0),
                     decoration: InputDecoration(
                       contentPadding: const EdgeInsets.symmetric(vertical: 25),
                       hintText: "PASTE SOURCE LINK...",
                       hintStyle: GoogleFonts.rajdhani(
                           color: Colors.white38,
-                          fontWeight: FontWeight.bold, letterSpacing: 2),
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2),
                       prefixIcon: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 20),
-                        child: Icon(Icons.link, color: kCyan, size: 30),
-                      ),
+                          padding: EdgeInsets.symmetric(horizontal: 20),
+                          child: Icon(Icons.link, color: kCyan, size: 30)),
                       border: InputBorder.none,
                     ),
                   ),
                 ),
                 const SizedBox(height: 40),
-
                 _neonButton(context,
-                  text: isLoading ? "PROCESSING..." : "PROCESS TEXTURE",
-                  onTap: isLoading ? null : _analyze,
-                ),
-
+                    text: isLoading ? "PROCESSING..." : "PROCESS TEXTURE",
+                    onTap: isLoading ? null : _analyze),
                 const SizedBox(height: 60),
-
                 if (predictedFabric.isNotEmpty) ...[
                   Center(
                     child: Text("HAPTIC PROFILE DETECTED",
                         style: GoogleFonts.orbitron(
-                            color: kCyan, letterSpacing: 5,
-                            fontSize: 14, fontWeight: FontWeight.w900)),
+                            color: kCyan,
+                            letterSpacing: 5,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900)),
                   ),
                   const SizedBox(height: 30),
                   _resultDisplay(predictedFabric),
@@ -392,28 +508,28 @@ class _HapticControlPageState extends State<HapticControlPage> {
 
   IconData _getIcon(String f) {
     if (f.contains("pamuk") || f.contains("cotton")) return Icons.cloud_outlined;
-    if (f.contains("ipek")  || f.contains("silk"))   return Icons.auto_awesome_outlined;
-    if (f.contains("denim") || f.contains("kot"))    return Icons.grid_view_outlined;
-    if (f.contains("yün")   || f.contains("wool"))   return Icons.waves_outlined;
+    if (f.contains("ipek") || f.contains("silk"))
+      return Icons.auto_awesome_outlined;
+    if (f.contains("denim") || f.contains("kot")) return Icons.grid_view_outlined;
+    if (f.contains("yün") || f.contains("wool")) return Icons.waves_outlined;
     return Icons.texture;
   }
 }
 
 Widget _techCoreVisual() {
   return Positioned(
-    top: -100, right: -100,
+    top: -100,
+    right: -100,
     child: Container(
-      width: 300, height: 300,
+      width: 300,
+      height: 300,
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: kBlue.withValues(alpha: 0.1),
-      ),
+          shape: BoxShape.circle, color: kBlue.withValues(alpha: 0.1)),
     ),
   );
 }
 
-Widget _neonButton(BuildContext context,
-    {required String text, VoidCallback? onTap}) {
+Widget _neonButton(BuildContext context, {required String text, VoidCallback? onTap}) {
   return GestureDetector(
     onTap: onTap,
     child: Container(
@@ -427,8 +543,10 @@ Widget _neonButton(BuildContext context,
       child: Center(
         child: Text(text,
             style: GoogleFonts.orbitron(
-                fontWeight: FontWeight.w900, letterSpacing: 3,
-                fontSize: 14, color: kDeepBg)),
+                fontWeight: FontWeight.w900,
+                letterSpacing: 3,
+                fontSize: 14,
+                color: kDeepBg)),
       ),
     ),
   );
@@ -438,19 +556,57 @@ Widget _glassBox({required Widget child, double padding = 20}) {
   return Container(
     padding: EdgeInsets.all(padding),
     decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: 0.06),
-      borderRadius: BorderRadius.circular(25),
-    ),
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(25)),
     child: child,
   );
 }
 
 Widget _pulsingDot(bool active) {
   return Container(
-    width: 16, height: 16,
+    width: 16,
+    height: 16,
     decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      color: active ? kCyan : Colors.white24,
-    ),
+        shape: BoxShape.circle, color: active ? kCyan : Colors.white24),
   );
+}
+
+class FabricDetectionHelper {
+  static Future<String> resolveLink(String rawText) async {
+    try {
+      RegExp exp = RegExp(r'(?:https?|ftp):\/\/[\w/\-?=%.&]+');
+      Iterable<RegExpMatch> matches = exp.allMatches(rawText);
+      if (matches.isEmpty) return rawText;
+      String cleanUrl = rawText.substring(matches.first.start, matches.first.end);
+      final uri = Uri.parse(cleanUrl);
+      if (!uri.host.contains('ty.gl') &&
+          !uri.host.contains('google') &&
+          !uri.host.contains('bit.ly')) {
+        return cleanUrl;
+      }
+      final client = HttpClient();
+      client.userAgent =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 13_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Mobile/15E148 Safari/604.1";
+      var request = await client.getUrl(uri);
+      request.followRedirects = false;
+      var response = await request.close();
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        final location = response.headers.value(HttpHeaders.locationHeader);
+        if (location != null) {
+          final redirectedUri = Uri.parse(location);
+          final adjustRedirect = redirectedUri.queryParameters['adjust_redirect'];
+          if (adjustRedirect != null && adjustRedirect.isNotEmpty) {
+            return Uri.decodeFull(adjustRedirect);
+          }
+          return await resolveLink(location);
+        }
+      }
+      return cleanUrl;
+    } catch (e) {
+      debugPrint("Link Çözme Hatası: $e");
+      RegExp exp = RegExp(r'(?:https?|ftp):\/\/[\w/\-?=%.&]+');
+      var match = exp.firstMatch(rawText);
+      return match != null ? rawText.substring(match.start, match.end) : rawText;
+    }
+  }
 }

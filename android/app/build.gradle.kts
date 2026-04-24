@@ -1,35 +1,45 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
+    // Flutter Gradle Plugin'i mutlaka diğerlerinden sonra gelmeli
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
+    layout.buildDirectory.set(file("${project.projectDir}/../../build/app"))
+    // Kendi proje adınla (package name) eşleştiğinden emin ol
     namespace = "com.example.haptic_project"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = "27.0.12077973"
+    compileSdk = 35
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
+    sourceSets {
+        getByName("main").java.srcDirs("src/main/kotlin")
     }
 
     defaultConfig {
+        // Kendi proje adınla eşleştiğinden emin ol
         applicationId = "com.example.haptic_project"
         minSdk = 21
-        targetSdk = 34
-        versionCode = flutter.versionCode
+        targetSdk = 35
+        versionCode = flutter.versionCode.toInt()
         versionName = flutter.versionName
     }
 
     buildTypes {
-        release {
+        getByName("release") {
+            // Sadece hata ayıklama (debug) aşamasındaysan burayı varsayılan bırak
+            isMinifyEnabled = false
+            isShrinkResources = false
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
     }
 }
 

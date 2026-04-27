@@ -5,7 +5,6 @@ import 'package:shelf/shelf_io.dart' as io;
 import 'package:shelf_router/shelf_router.dart';
 
 class HapticServer {
-  // Bu fonksiyon senin Bluetooth ile veri gönderen ana fonksiyonun olacak
   final Function(String) onDataReceived;
 
   HapticServer({required this.onDataReceived});
@@ -13,28 +12,24 @@ class HapticServer {
   Future<void> startServer() async {
     final router = Router();
 
-    // Uzantıdan gelen POST isteğini karşılayan yer:
     router.post('/feel', (Request request) async {
       final payload = await request.readAsString();
       final data = jsonDecode(payload);
       String material = data['material'];
 
-      print("Uzantıdan mesaj geldi: $material");
+      print("A message arrived from the extension: $material");
 
-      // Flutter arayüzüne veya Bluetooth servisine haber veriyoruz
       onDataReceived(material);
 
-      // Tarayıcıya "Tamam, aldım" diyoruz (CORS ayarlarıyla birlikte)
       return Response.ok(
         jsonEncode({'status': 'success'}),
         headers: {
-          'Access-Control-Allow-Origin': '*', // Tarayıcı engellememesi için kritik!
+          'Access-Control-Allow-Origin': '*',
           'Content-Type': 'application/json',
         },
       );
     });
 
-    // Options isteği (Tarayıcılar güvenlik için önce bunu sorar)
     router.all('/<ignored|.*>', (Request request) {
       if (request.method == 'OPTIONS') {
         return Response.ok('', headers: {
@@ -47,6 +42,6 @@ class HapticServer {
     });
 
     var server = await io.serve(router, '127.0.0.1', 8080);
-    print('Server http://${server.address.address}:${server.port} adresinde dinliyor.');
+    print('Server is listening at http://${server.address.address}:${server.port}.');
   }
 }

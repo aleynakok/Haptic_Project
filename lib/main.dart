@@ -66,7 +66,7 @@ class WelcomePage extends StatelessWidget {
                   "HAPTIC\nPROJECT",
                   gradient: const LinearGradient(colors: [Colors.white, kCyan]),
                   style: GoogleFonts.orbitron(
-                    fontSize: 42,
+                    fontSize: 40,
                     fontWeight: FontWeight.w900,
                     height: 1.3,
                     letterSpacing: 12,
@@ -111,7 +111,7 @@ class _HapticControlPageState extends State<HapticControlPage> {
   bool isScanning = false;
   String predictedFabric = "";
   bool isLoading = false;
-  bool isMuted = false; // Mute durumu için değişken
+  bool isMuted = false;
 
   StreamSubscription? _scanSub;
   StreamSubscription? _isScanSub;
@@ -124,16 +124,12 @@ class _HapticControlPageState extends State<HapticControlPage> {
   final String charUuid = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
   final Map<String, String> fabricCommands = {
-    "ipek": "1",
     "silk": "1",
-    "pamuk": "2",
     "cotton": "2",
     "denim": "3",
-    "kot": "3",
-    "yün": "4",
     "wool": "4",
-    "keten": "5",
-    "sentetik": "6",
+    "linen": "5",
+    "synthetic": "6",
   };
 
   @override
@@ -149,7 +145,7 @@ class _HapticControlPageState extends State<HapticControlPage> {
             _handleIncomingText(value.first.path);
           }
         }, onError: (err) {
-          debugPrint("Gelen paylaşım hatası: $err");
+          debugPrint("Incoming sharing error: $err");
         });
 
     ReceiveSharingIntent.instance.getInitialMedia().then((value) {
@@ -161,7 +157,7 @@ class _HapticControlPageState extends State<HapticControlPage> {
 
   Future<void> _handleIncomingText(String rawText) async {
     setState(() {
-      _urlController.text = "Link Hazırlanıyor...";
+      _urlController.text = "Link is being prepared...";
       isLoading = true;
     });
     String finalLink = await FabricDetectionHelper.resolveLink(rawText);
@@ -171,7 +167,6 @@ class _HapticControlPageState extends State<HapticControlPage> {
     _analyze();
   }
 
-  // Mute/Unmute fonksiyonu
   void _toggleMute(bool value) async {
     if (!isConnected || targetCharacteristic == null) {
       _showSnackBar("PLEASE CONNECT DEVICE FIRST");
@@ -181,7 +176,7 @@ class _HapticControlPageState extends State<HapticControlPage> {
     String cmd = isMuted ? "0" : "u";
     try {
       await targetCharacteristic!.write(cmd.codeUnits);
-      _showSnackBar(isMuted ? "SYSTEM MUTED (0)" : "SYSTEM ACTIVE (U)",
+      _showSnackBar(isMuted ? "SYSTEM MUTED" : "SYSTEM UNMUTED",
           isError: false);
     } catch (e) {
       _showSnackBar("MUTE COMMAND FAILED");
@@ -288,25 +283,30 @@ class _HapticControlPageState extends State<HapticControlPage> {
       if (resolvedUrl != input) {
         setState(() => _urlController.text = resolvedUrl);
       }
+
       final result = await _aiService.predictFabric(resolvedUrl);
       final normalized = result.toLowerCase().trim();
-      final cmd = fabricCommands[normalized] ?? "1";
+
+      final cmd = fabricCommands[normalized];
+
       if (mounted) setState(() => isLoading = false);
 
-      if (isConnected) {
-        if (isMuted) {
-          // Mute açıksa haptic komut gönderme, sadece sonucu göster
-          if (mounted) setState(() => predictedFabric = normalized);
-          _showSnackBar("MUTED: ${normalized.toUpperCase()} DETECTED",
-              isError: false);
+      if (cmd != null) {
+        if (isConnected) {
+          if (isMuted) {
+            if (mounted) setState(() => predictedFabric = normalized);
+            _showSnackBar("MUTED: ${normalized.toUpperCase()} DETECTED", isError: false);
+          } else {
+            sendCommand(normalized, cmd);
+            _showSnackBar("ANALYSIS COMPLETE: ${normalized.toUpperCase()}", isError: false);
+          }
         } else {
-          sendCommand(normalized, cmd);
-          _showSnackBar("ANALYSIS COMPLETE: ${normalized.toUpperCase()}",
-              isError: false);
+          if (mounted) setState(() => predictedFabric = normalized);
+          _showSnackBar("PLEASE CONNECT DEVICE TO SYNC TEXTURE");
         }
       } else {
-        if (mounted) setState(() => predictedFabric = normalized);
-        _showSnackBar("PLEASE CONNECT DEVICE TO SYNC TEXTURE");
+        if (mounted) setState(() => predictedFabric = "other");
+        _showSnackBar("UNKNOWN TEXTURE: NO SIGNAL SENT", isError: true);
       }
     } catch (e) {
       if (mounted) setState(() => isLoading = false);
@@ -399,7 +399,6 @@ class _HapticControlPageState extends State<HapticControlPage> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                // MUTE/UNMUTE SWITCH ALANI
                 _glassBox(
                   padding: 12,
                   child: Row(
@@ -415,7 +414,7 @@ class _HapticControlPageState extends State<HapticControlPage> {
                           ),
                           const SizedBox(width: 15),
                           Text(
-                            isMuted ? "SYSTEM MUTED" : "SYSTEM ACTIVE",
+                            isMuted ? "SYSTEM MUTED" : "SYSTEM UNMUTED",
                             style: GoogleFonts.orbitron(
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
@@ -507,12 +506,15 @@ class _HapticControlPageState extends State<HapticControlPage> {
   }
 
   IconData _getIcon(String f) {
-    if (f.contains("pamuk") || f.contains("cotton")) return Icons.cloud_outlined;
-    if (f.contains("ipek") || f.contains("silk"))
-      return Icons.auto_awesome_outlined;
-    if (f.contains("denim") || f.contains("kot")) return Icons.grid_view_outlined;
-    if (f.contains("yün") || f.contains("wool")) return Icons.waves_outlined;
-    return Icons.texture;
+    if (f.contains("cotton")) return Icons.cloud_outlined;
+    if (f.contains("silk")) return Icons.auto_awesome_outlined;
+    if (f.contains("denim")) return Icons.grid_view_outlined;
+    if (f.contains("wool")) return Icons.waves_outlined;
+
+    if (f.contains("linen")) return Icons.eco;
+    if (f.contains("synthetic")) return Icons.precision_manufacturing;
+
+    return Icons.texture; 
   }
 }
 
@@ -603,7 +605,7 @@ class FabricDetectionHelper {
       }
       return cleanUrl;
     } catch (e) {
-      debugPrint("Link Çözme Hatası: $e");
+      debugPrint("Link Resolution Error: $e");
       RegExp exp = RegExp(r'(?:https?|ftp):\/\/[\w/\-?=%.&]+');
       var match = exp.firstMatch(rawText);
       return match != null ? rawText.substring(match.start, match.end) : rawText;

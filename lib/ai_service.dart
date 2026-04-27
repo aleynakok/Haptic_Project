@@ -6,18 +6,18 @@ class AIService {
   final String apiUrl  = "https://haptic-project-ai.onrender.com/predict";
 
   Future<String> predictFabric(String url) async {
-    print("Sunucu uyandırılıyor...");
+    print("Server is waking up...");
 
     try {
       await http
           .get(Uri.parse(baseUrl))
           .timeout(const Duration(seconds: 60));
-      print("Sunucu uyanık.");
+      print("Server is awake.");
     } catch (_) {
-      print("Ping başarısız, yine de deneniyor...");
+      print("Ping failed, but it's still being tried....");
     }
 
-    print("İstek gönderiliyor: $url");
+    print("Sending request: $url");
     try {
       final response = await http
           .post(
@@ -27,17 +27,17 @@ class AIService {
       )
           .timeout(const Duration(seconds: 30));
 
-      print("Cevap geldi: ${response.statusCode}");
+      print("The answer came: ${response.statusCode}");
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['fabric_type'] ?? "Kumaş Belirlenemedi";
+        return data['fabric_type'] ?? "Fabric Unidentified";
       } else {
-        return "Sunucu Hatası: ${response.statusCode}";
+        return "Server Error: ${response.statusCode}";
       }
     } catch (e) {
-      print("Bağlantı Hatası Detayı: $e");
-      return "Bağlantı kurulamadı. Sunucu açık mı?";
+      print("Connection Error Details: $e");
+      return "Connection could not be established. Is the server online?";
     }
   }
 }

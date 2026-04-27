@@ -1,7 +1,5 @@
-# Uncomment this line to define a global platform for your project
 platform :ios, '12.0'
 
-# CocoaPods analytics sends network stats. Disable it for faster installs.
 ENV['COCOAPODS_DISABLE_STATS'] = '1'
 
 project 'Runner', {
